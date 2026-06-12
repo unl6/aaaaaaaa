@@ -38,16 +38,16 @@ Dazeware.ModDetector = {
 --// Resolver
 Dazeware.Resolver = {
     Enabled = true,
-    Strength = 0.95,
+    Strength = 0.65,
     UseAdvanced = true,
 }
 
 --// Aim Assist 
 Dazeware.AimAssist = {
     Enabled = false,
-    Smoothness = 0.015,
+    Smoothness = 0.018,
     HitPart = "Head",
-    Prediction = { X = 0.165, Y = 0.165, Z = 0.165 },
+    Prediction = { X = 0.095, Y = 0.095, Z = 0.095 },
     FOV = { Enabled = true, Visible = true, Mode = "2D", ["2D"] = {X = 120, Y = 120}, ["3D"] = {Radius = 120} },
 }
 
@@ -55,7 +55,7 @@ Dazeware.AimAssist = {
 Dazeware.SilentAim = {
     Enabled = false,
     HitPart = "HumanoidRootPart",
-    Prediction = { X = 0.185, Y = 0.185, Z = 0.185 },
+    Prediction = { X = 0.105, Y = 0.105, Z = 0.105 },
     TargetLine = { Enabled = true, Regular = Color3.fromRGB(255, 255, 255), InFOV = Color3.fromRGB(216, 103, 103) },
     FOV = { Enabled = true, Visible = true, Mode = "2D", ["2D"] = {X = 360, Y = 360}, ["3D"] = {Radius = 360} },
     HitChance = 100,
@@ -70,7 +70,7 @@ Dazeware.TriggerBot = {
 
 --// Misc Features
 Dazeware.Misc = {
-    BulletTP = { Enabled = false, Strength = 1.6 },
+    BulletTP = { Enabled = false, Strength = 1.2 },
     WalkSpeed = { Enabled = false, Speed = 250 },
     AntiLock = { Enabled = false, Strength = 9e9, RotationSpeed = 0 },
     NoJumpCooldown = { Enabled = true },
@@ -240,39 +240,46 @@ local function UpdateTarget()
     CurrentTarget = GetClosestPlayer()
 end
 
--- ==================== ESP ====================
+-- ==================== ESP (Smooth Movement with WorldToViewportPointVector) ====================
 local ESPObjects = {}
 local function CreateESP(plr)
     if plr == LocalPlayer or ESPObjects[plr] then return end
     local Name = Drawing.new("Text")
     Name.Size = 16; Name.Center = true; Name.Outline = true; Name.Color = Color3.fromRGB(255,255,255); Name.Visible = false
-    ESPObjects[plr] = Name
+    -- Add a smooth position target
+    local espData = { obj = Name, smoothPos = Vector2.new(0, 0) }
+    ESPObjects[plr] = espData
 end
 
 for _, plr in ipairs(Players:GetPlayers()) do CreateESP(plr) end
 Players.PlayerAdded:Connect(CreateESP)
 
--- Separate ESP render loop to avoid blocking main loop
+-- ESP render loop with smooth interpolation
 spawn(function()
-    while task.wait(0.05) do
+    while task.wait() do
         if not ESPEnabled then
-            for _, obj in pairs(ESPObjects) do obj.Visible = false end
+            for _, data in pairs(ESPObjects) do data.obj.Visible = false end
             continue
         end
-        for plr, nameObj in pairs(ESPObjects) do
+        for plr, data in pairs(ESPObjects) do
+            local obj = data.obj
             if plr.Character and plr.Character:FindFirstChild("HumanoidRootPart") and IsValidTarget(plr) then
                 local root = plr.Character.HumanoidRootPart
                 local pos, onScreen = Camera:WorldToViewportPoint(root.Position)
                 if onScreen then
+                    local targetPos = Vector2.new(pos.X, pos.Y + Dazeware.ESPSettings.OffsetY)
+                    -- Smooth interpolation
+                    data.smoothPos = data.smoothPos:Lerp(targetPos, 0.25)
+                    
                     local displayName = Dazeware.ESPSettings.ShowDisplayName and plr.DisplayName or plr.Name
-                    nameObj.Text = displayName
-                    nameObj.Position = Vector2.new(pos.X, pos.Y + Dazeware.ESPSettings.OffsetY)
-                    nameObj.Color = ((Dazeware.SilentAim.Enabled or Dazeware.AimAssist.Enabled) and plr == CurrentTarget) and Color3.fromRGB(255,0,0) or Color3.fromRGB(255,255,255)
-                    nameObj.Visible = true
+                    obj.Text = displayName
+                    obj.Position = data.smoothPos
+                    obj.Color = ((Dazeware.SilentAim.Enabled or Dazeware.AimAssist.Enabled) and plr == CurrentTarget) and Color3.fromRGB(255,0,0) or Color3.fromRGB(255,255,255)
+                    obj.Visible = true
                     continue
                 end
             end
-            nameObj.Visible = false
+            obj.Visible = false
         end
     end
 end)
@@ -371,15 +378,22 @@ local function SortInventory()
     Notify("Inventory Sorted!")
 end
 
--- ==================== RESOLVER ====================
+-- ==================== RESOLVER (Tuned for Macro + Normal Movement) ====================
 local function GetResolvedPosition(target)
     local char = target.Character
     local root = char and char:FindFirstChild("HumanoidRootPart")
     if not root then return Vector3.new() end
     local vel = root.AssemblyLinearVelocity
     local basePos = root.Position
-    if vel.Magnitude > 130 then vel = vel.Unit * 130 end
-    vel = Vector3.new(vel.X, math.clamp(vel.Y, -50, 50), vel.Z)
+    
+    -- Softer velocity clamping for normal movement
+    if vel.Magnitude > 130 then 
+        vel = vel.Unit * 130 
+    elseif vel.Magnitude < 0.5 then
+        vel = Vector3.new(0, 0, 0) -- Standing still = no prediction
+    end
+    
+    vel = Vector3.new(vel.X, math.clamp(vel.Y, -30, 30), vel.Z)
 
     if not Dazeware.Resolver.Enabled then
         return basePos + (vel * Vector3.new(Dazeware.SilentAim.Prediction.X, Dazeware.SilentAim.Prediction.Y, Dazeware.SilentAim.Prediction.Z))
@@ -388,11 +402,21 @@ local function GetResolvedPosition(target)
     if Dazeware.Resolver.UseAdvanced then
         if not positionHistory[target] then positionHistory[target] = {} end
         table.insert(positionHistory[target], basePos)
-        if #positionHistory[target] > 10 then table.remove(positionHistory[target], 1) end
-        local avgPos = Vector3.new(0,0,0)
-        for _, p in ipairs(positionHistory[target]) do avgPos += p end
-        avgPos /= #positionHistory[target]
-        return avgPos + vel * Dazeware.Resolver.Strength
+        if #positionHistory[target] > 6 then table.remove(positionHistory[target], 1) end
+        
+        -- Weighted average: newer positions matter more
+        local totalWeight = 0
+        local weightedPos = Vector3.new(0, 0, 0)
+        for i, p in ipairs(positionHistory[target]) do
+            local weight = i / #positionHistory[target]
+            weightedPos += p * weight
+            totalWeight += weight
+        end
+        weightedPos /= totalWeight
+        
+        -- Dynamic prediction: less prediction for high speeds, more for walking
+        local speedFactor = math.clamp(vel.Magnitude / 50, 0.2, 1)
+        return weightedPos + vel * (Dazeware.Resolver.Strength * speedFactor)
     else
         return basePos + vel * Dazeware.Resolver.Strength
     end
@@ -428,8 +452,7 @@ local function UpdateTargetLine()
 end
 CreateTargetLine()
 
--- ==================== SILENT AIM HOOK (Performance Optimized) ====================
--- Only hook __index (lightweight), skip __namecall entirely to prevent freeze
+-- ==================== SILENT AIM HOOK ====================
 local mt = getrawmetatable(game)
 local oldIndex = mt.__index
 setreadonly(mt, false)
@@ -479,7 +502,7 @@ RunService.RenderStepped:Connect(function()
     if hitPart then
         local vel = hitPart.AssemblyLinearVelocity
         if vel.Magnitude > 130 then vel = vel.Unit * 130 end
-        vel = Vector3.new(vel.X, math.clamp(vel.Y, -50, 50), vel.Z)
+        vel = Vector3.new(vel.X, math.clamp(vel.Y, -30, 30), vel.Z)
         local vectorPred = Vector3.new(Dazeware.AimAssist.Prediction.X, Dazeware.AimAssist.Prediction.Y, Dazeware.AimAssist.Prediction.Z)
         local pred = hitPart.Position + (vel * vectorPred)
         Camera.CFrame = Camera.CFrame:Lerp(CFrame.lookAt(Camera.CFrame.Position, pred), Dazeware.AimAssist.Smoothness)
