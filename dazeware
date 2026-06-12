@@ -45,7 +45,7 @@ Dazeware.Resolver = {
 --// Aim Assist 
 Dazeware.AimAssist = {
     Enabled = false,
-    Smoothness = 0.03,
+    Smoothness = 0.12,
     HitPart = "HumanoidRootPart",
     Prediction = { X = 0.085, Y = 0.06, Z = 0.085 },
     FOV = { Enabled = true, Visible = true, Mode = "2D", ["2D"] = {X = 120, Y = 120}, ["3D"] = {Radius = 120} },
@@ -55,7 +55,7 @@ Dazeware.AimAssist = {
 Dazeware.SilentAim = {
     Enabled = false,
     HitPart = "HumanoidRootPart",
-    Prediction = { X = 0.09, Y = 0.065, Z = 0.09 },
+    Prediction = { X = 0.135, Y = 0.085, Z = 0.135 },
     TargetLine = { Enabled = true, Regular = Color3.fromRGB(255, 255, 255), InFOV = Color3.fromRGB(216, 103, 103) },
     FOV = { Enabled = true, Visible = true, Mode = "2D", ["2D"] = {X = 360, Y = 360}, ["3D"] = {Radius = 360} },
     HitChance = 100,
