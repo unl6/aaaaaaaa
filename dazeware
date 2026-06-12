@@ -37,17 +37,17 @@ Dazeware.ModDetector = {
 
 --// Resolver
 Dazeware.Resolver = {
-    Enabled = true,
-    Strength = 0.35,
-    UseAdvanced = true,
+    Enabled = false,
+    Strength = 0.0,
+    UseAdvanced = false,
 }
 
 --// Aim Assist 
 Dazeware.AimAssist = {
     Enabled = false,
-    Smoothness = 0.025,
-    HitPart = "Head",
-    Prediction = { X = 0.05, Y = 0.02, Z = 0.05 },
+    Smoothness = 0.03,
+    HitPart = "HumanoidRootPart",
+    Prediction = { X = 0.0, Y = 0.0, Z = 0.0 },
     FOV = { Enabled = true, Visible = true, Mode = "2D", ["2D"] = {X = 120, Y = 120}, ["3D"] = {Radius = 120} },
 }
 
@@ -55,22 +55,22 @@ Dazeware.AimAssist = {
 Dazeware.SilentAim = {
     Enabled = false,
     HitPart = "HumanoidRootPart",
-    Prediction = { X = 0.06, Y = 0.03, Z = 0.06 },
+    Prediction = { X = 0.0, Y = 0.0, Z = 0.0 },
     TargetLine = { Enabled = true, Regular = Color3.fromRGB(255, 255, 255), InFOV = Color3.fromRGB(216, 103, 103) },
     FOV = { Enabled = true, Visible = true, Mode = "2D", ["2D"] = {X = 360, Y = 360}, ["3D"] = {Radius = 360} },
     HitChance = 100,
 }
 
---// Trigger Bot (Da Uphill optimized)
+--// Trigger Bot (MAX FIRE RATE - no cooldown)
 Dazeware.TriggerBot = {
     Enabled = false,
-    Cooldown = 0.12,
+    Cooldown = 0,
     FOV = { Enabled = true, Visible = false, Mode = "2D", ["2D"] = {X = 99999, Y = 99999}, ["3D"] = {Radius = 99999} }
 }
 
 --// Misc Features
 Dazeware.Misc = {
-    BulletTP = { Enabled = false, Strength = 0.8 },
+    BulletTP = { Enabled = false, Strength = 0.5 },
     WalkSpeed = { Enabled = false, Speed = 250 },
     AntiLock = { Enabled = false, Strength = 9e9, RotationSpeed = 0 },
     NoJumpCooldown = { Enabled = true },
@@ -107,7 +107,6 @@ local CurrentTarget = nil
 local targetLine = nil
 local ESPEnabled = true
 local AutoBuyEnabled = false
-local positionHistory = {}
 
 local function Notify(text)
     StarterGui:SetCore("SendNotification", {Title = "dazeware", Text = text, Duration = 2})
@@ -238,7 +237,7 @@ local function UpdateTarget()
     CurrentTarget = GetClosestPlayer()
 end
 
--- ==================== ESP (RenderStepped for smoothness) ====================
+-- ==================== ESP ====================
 local ESPObjects = {}
 local function CreateESP(plr)
     if plr == LocalPlayer or ESPObjects[plr] then return end
@@ -250,7 +249,6 @@ end
 for _, plr in ipairs(Players:GetPlayers()) do CreateESP(plr) end
 Players.PlayerAdded:Connect(CreateESP)
 
--- ESP on RenderStepped for buttery smooth movement
 RunService.RenderStepped:Connect(function()
     for plr, data in pairs(ESPObjects) do
         local obj = data.obj
@@ -258,7 +256,6 @@ RunService.RenderStepped:Connect(function()
             local root = plr.Character.HumanoidRootPart
             local pos, onScreen = Camera:WorldToViewportPoint(root.Position)
             if onScreen then
-                -- Exponential smoothing
                 data.smoothX = data.smoothX + (pos.X - data.smoothX) * 0.35
                 data.smoothY = data.smoothY + ((pos.Y + Dazeware.ESPSettings.OffsetY) - data.smoothY) * 0.35
                 
@@ -370,40 +367,32 @@ local function SortInventory()
     Notify("Inventory Sorted!")
 end
 
--- ==================== RESOLVER (Minimal prediction) ====================
-local function GetResolvedPosition(target)
-    local char = target.Character
-    local root = char and char:FindFirstChild("HumanoidRootPart")
-    if not root then return Vector3.new() end
-    local vel = root.AssemblyLinearVelocity
-    local basePos = root.Position
-    
-    -- Only predict if they're actually moving
-    if vel.Magnitude > 0.5 then
-        if vel.Magnitude > 130 then vel = vel.Unit * 130 end
-        vel = Vector3.new(vel.X, math.clamp(vel.Y, -20, 20), vel.Z)
-        
-        if Dazeware.Resolver.Enabled then
-            if Dazeware.Resolver.UseAdvanced then
-                if not positionHistory[target] then positionHistory[target] = {} end
-                table.insert(positionHistory[target], basePos)
-                if #positionHistory[target] > 4 then table.remove(positionHistory[target], 1) end
-                
-                local avgPos = Vector3.new(0,0,0)
-                for _, p in ipairs(positionHistory[target]) do avgPos += p end
-                avgPos /= #positionHistory[target]
-                
-                return avgPos + vel * Dazeware.Resolver.Strength
-            else
-                return basePos + vel * Dazeware.Resolver.Strength
+-- ==================== SILENT AIM ====================
+local mt = getrawmetatable(game)
+local oldIndex = mt.__index
+setreadonly(mt, false)
+
+mt.__index = newcclosure(function(self, k)
+    if Dazeware.SilentAim.Enabled and self == LocalPlayer:GetMouse() then
+        local t = CurrentTarget
+        if t and t.Character and IsValidTarget(t) then
+            local hp = t.Character:FindFirstChild(Dazeware.SilentAim.HitPart) or t.Character:FindFirstChild("HumanoidRootPart")
+            if hp then
+                if k == "Hit" then
+                    if Dazeware.Misc.BulletTP.Enabled then
+                        return CFrame.new(hp.Position + hp.Velocity * Dazeware.Misc.BulletTP.Strength)
+                    end
+                    return CFrame.new(hp.Position)
+                elseif k == "Target" then
+                    return hp
+                end
             end
-        else
-            return basePos + (vel * Vector3.new(Dazeware.SilentAim.Prediction.X, Dazeware.SilentAim.Prediction.Y, Dazeware.SilentAim.Prediction.Z))
         end
     end
-    
-    return basePos
-end
+    return oldIndex(self, k)
+end)
+
+setreadonly(mt, true)
 
 -- ==================== TARGET LINE ====================
 local function CreateTargetLine()
@@ -435,67 +424,18 @@ local function UpdateTargetLine()
 end
 CreateTargetLine()
 
--- ==================== SILENT AIM HOOK ====================
-local mt = getrawmetatable(game)
-local oldIndex = mt.__index
-setreadonly(mt, false)
-
-mt.__index = newcclosure(function(self, k)
-    if Dazeware.SilentAim.Enabled and self == LocalPlayer:GetMouse() then
-        local t = CurrentTarget
-        if t and t.Character and IsValidTarget(t) then
-            local hp = t.Character:FindFirstChild(Dazeware.SilentAim.HitPart) or t.Character:FindFirstChild("HumanoidRootPart")
-            if hp then
-                local resolvedPos = GetResolvedPosition(t)
-                if k == "Hit" then
-                    return Dazeware.Misc.BulletTP.Enabled and CFrame.new(resolvedPos + hp.Velocity * Dazeware.Misc.BulletTP.Strength) or CFrame.new(resolvedPos)
-                elseif k == "Target" then
-                    return hp
-                end
-            end
-        end
-    end
-    return oldIndex(self, k)
-end)
-
-setreadonly(mt, true)
-
--- ==================== TRIGGER BOT (Fixed for Da Uphill) ====================
--- Use InputBegan for trigger - fires when you click to shoot
-UserInputService.InputBegan:Connect(function(input, gp)
-    if gp then return end
-    
-    -- Trigger bot: when you click, auto-adjust to hit
-    if input.UserInputType == Enum.UserInputType.MouseButton1 then
-        if Dazeware.TriggerBot.Enabled and CurrentTarget and IsValidTarget(CurrentTarget) then
-            local tool = LocalPlayer.Character and LocalPlayer.Character:FindFirstChildOfClass("Tool")
-            if tool then
-                local toolName = tool.Name:lower()
-                if not (toolName:find("katana") or toolName:find("knife") or toolName:find("fists")) then
-                    -- Rapid re-fire to ensure hit registers
-                    tool:Activate()
-                    task.wait(0.05)
-                    tool:Activate()
-                    task.wait(0.05)
-                    tool:Activate()
-                end
-            end
-        end
-    end
-end)
-
--- Keep a heartbeat version too for auto-fire (crosshair on target)
-local lastTrigger = 0
+-- ==================== TRIGGER BOT - MAX FIRE RATE ====================
+-- Fires on EVERY heartbeat frame as fast as the engine can process
 RunService.Heartbeat:Connect(function()
     if not Dazeware.TriggerBot.Enabled or not CurrentTarget or not IsValidTarget(CurrentTarget) then return end
-    local now = tick()
-    if now - lastTrigger < Dazeware.TriggerBot.Cooldown then return end
+    
     local tool = LocalPlayer.Character and LocalPlayer.Character:FindFirstChildOfClass("Tool")
     if not tool then return end
+    
     local toolName = tool.Name:lower()
     if toolName:find("katana") or toolName:find("knife") or toolName:find("fists") then return end
     
-    -- Check if we're aiming near the target on screen
+    -- Check target is on screen
     local root = CurrentTarget.Character and CurrentTarget.Character:FindFirstChild("HumanoidRootPart")
     if root then
         local pos, onScreen = Camera:WorldToViewportPoint(root.Position)
@@ -503,9 +443,29 @@ RunService.Heartbeat:Connect(function()
             local mousePos = UserInputService:GetMouseLocation()
             local screenTarget = Vector2.new(pos.X, pos.Y)
             local dist = (mousePos - screenTarget).Magnitude
-            if dist < 200 then -- Close enough to trigger
+            if dist < 300 then -- Generous range
+                -- Fire EVERY heartbeat frame (60+ shots/sec)
                 tool:Activate()
-                lastTrigger = now
+            end
+        end
+    end
+end)
+
+-- Also fire on click with no cooldown
+UserInputService.InputBegan:Connect(function(input, gp)
+    if gp then return end
+    if input.UserInputType == Enum.UserInputType.MouseButton1 then
+        if Dazeware.TriggerBot.Enabled and CurrentTarget and IsValidTarget(CurrentTarget) then
+            local tool = LocalPlayer.Character and LocalPlayer.Character:FindFirstChildOfClass("Tool")
+            if tool then
+                local toolName = tool.Name:lower()
+                if not (toolName:find("katana") or toolName:find("knife") or toolName:find("fists")) then
+                    -- Rapid burst on click
+                    for i = 1, 5 do
+                        tool:Activate()
+                        task.wait()
+                    end
+                end
             end
         end
     end
@@ -516,19 +476,10 @@ RunService.RenderStepped:Connect(function()
     UpdateTargetLine()
     UpdateTarget()
     
-    -- Aim Assist
     if not Dazeware.AimAssist.Enabled or not CurrentTarget or not IsVisible(CurrentTarget) or not IsValidTarget(CurrentTarget) then return end
     local hitPart = CurrentTarget.Character:FindFirstChild(Dazeware.AimAssist.HitPart) or CurrentTarget.Character:FindFirstChild("HumanoidRootPart")
     if hitPart then
-        local vel = hitPart.AssemblyLinearVelocity
-        local pred = hitPart.Position
-        if vel.Magnitude > 0.5 then
-            if vel.Magnitude > 130 then vel = vel.Unit * 130 end
-            vel = Vector3.new(vel.X, math.clamp(vel.Y, -20, 20), vel.Z)
-            local vectorPred = Vector3.new(Dazeware.AimAssist.Prediction.X, Dazeware.AimAssist.Prediction.Y, Dazeware.AimAssist.Prediction.Z)
-            pred = hitPart.Position + (vel * vectorPred)
-        end
-        Camera.CFrame = Camera.CFrame:Lerp(CFrame.lookAt(Camera.CFrame.Position, pred), Dazeware.AimAssist.Smoothness)
+        Camera.CFrame = Camera.CFrame:Lerp(CFrame.lookAt(Camera.CFrame.Position, hitPart.Position), Dazeware.AimAssist.Smoothness)
     end
 end)
 
