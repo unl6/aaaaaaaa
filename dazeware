@@ -1,0 +1,591 @@
+-- dazeware - Da Uphill Enhanced (Multi-Bind Refix)
+print("dazeware loaded for Da Uphill :)")
+
+local Dazeware = {}
+-- ==================== CONFIGURATION ====================
+Dazeware.General = {
+    Binds = {
+        ["InventorySorter"] = "B",
+        ["WalkSpeed"] = "G",
+        ["BulletTP"] = "V",
+        ["AntiLock"] = "K",
+        ["ESP"] = "P",
+        ["SuperJump"] = "H",
+        ["Resolver"] = "J",
+        ["SilentAimToggle"] = "C",
+        ["AimAssistToggle"] = "X",
+        ["TriggerBotToggle"] = "Z",
+    },
+}
+
+--// Mod Detector
+Dazeware.ModDetector = {
+    Enabled = true,
+    KickOnMod = false,
+    GroupId = 848374803,
+    UserIds = {
+        8329142454,
+        8655192580,
+        1301544215,
+        1499556980,
+        7627361,
+        555909464,
+        848355298,
+        7157153757
+    }
+}
+
+--// Resolver (Enhanced for Da Uphill)
+Dazeware.Resolver = {
+    Enabled = true,
+    Strength = 0.95,
+    UseAdvanced = true,
+}
+
+--// Aim Assist 
+Dazeware.AimAssist = {
+    Enabled = false,
+    Smoothness = 0.008,
+    HitPart = "Head",
+    Prediction = { X = 0.165, Y = 0.165, Z = 0.165 },
+    FOV = { Enabled = true, Visible = true, Mode = "2D", ["2D"] = {X = 120, Y = 120}, ["3D"] = {Radius = 120} },
+}
+
+--// Silent Aim (Tuned for Da Uphill 94025855507158)
+Dazeware.SilentAim = {
+    Enabled = false,
+    HitPart = "HumanoidRootPart",
+    Prediction = { X = 0.185, Y = 0.185, Z = 0.185 },
+    TargetLine = { Enabled = true, Regular = Color3.fromRGB(255, 255, 255), InFOV = Color3.fromRGB(216, 103, 103) },
+    FOV = { Enabled = true, Visible = true, Mode = "2D", ["2D"] = {X = 360, Y = 360}, ["3D"] = {Radius = 360} },
+    HitChance = 100,
+}
+
+--// Trigger Bot
+Dazeware.TriggerBot = {
+    Enabled = false,
+    Cooldown = 0.0000001,
+    FOV = { Enabled = true, Visible = false, Mode = "2D", ["2D"] = {X = 99999, Y = 99999}, ["3D"] = {Radius = 99999} }
+}
+
+--// Misc Features
+Dazeware.Misc = {
+    BulletTP = { Enabled = false, Strength = 1.6 },
+    WalkSpeed = { Enabled = false, Speed = 250 },
+    AntiLock = { Enabled = false, Strength = 9e9, RotationSpeed = 0 },
+    NoJumpCooldown = { Enabled = true },
+    SuperJump = { Enabled = false, Power = 120 },
+}
+
+--// ESP Settings
+Dazeware.ESPSettings = {
+    Enabled = true,
+    ShowDisplayName = true,
+    OffsetY = 25,
+}
+
+--// Inventory Sorter
+Dazeware.Utilities = {
+    InventorySorter = {
+        Enabled = true,
+        Order = {"[Double-Barrel SG]", "[Revolver]", "[TacticalShotgun]", "[Shotgun]", "[Katana]", "[Knife]", "[USP]", "[Medium Armor]", "[High-Medium Armor]"}
+    }
+}
+
+shared.Dazeware = Dazeware
+
+-- ==================== SERVICES ====================
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
+local StarterGui = game:GetService("StarterGui")
+local Workspace = game:GetService("Workspace")
+local LocalPlayer = Players.LocalPlayer
+local Camera = Workspace.CurrentCamera
+
+local CurrentTarget = nil
+local targetLine = nil
+local ESPEnabled = true
+local AutoBuyEnabled = false
+local positionHistory = {}
+
+local function Notify(text)
+    StarterGui:SetCore("SendNotification", {Title = "dazeware", Text = text, Duration = 2})
+end
+
+-- ==================== MOD DETECTOR ====================
+local function gethead(id)
+    local ok, img = pcall(function()
+        return Players:GetUserThumbnailAsync(id, Enum.ThumbnailType.HeadShot, Enum.ThumbnailSize.Size420x420)
+    end)
+    return ok and img or "rbxassetid://15059364356"
+end
+
+local function modNotify(plr, msg)
+    StarterGui:SetCore("SendNotification", {
+        Title = plr.DisplayName,
+        Text = plr.Name .. " " .. msg,
+        Icon = gethead(plr.UserId),
+        Duration = 8
+    })
+end
+
+local function IsStaff(plr)
+    if table.find(Dazeware.ModDetector.UserIds, plr.UserId) then return true end
+    local ok, res = pcall(function()
+        return plr:IsInGroup(Dazeware.ModDetector.GroupId)
+    end)
+    return ok and res
+end
+
+local function CheckForMod(plr)
+    if not Dazeware.ModDetector.Enabled then return end
+    if IsStaff(plr) then
+        modNotify(plr, "joined the server")
+        if Dazeware.ModDetector.KickOnMod then
+            Notify("⚠️ Mod detected! Kicking...")
+            task.wait(0.5)
+            LocalPlayer:Kick("Mod detected in server.")
+        end
+    end
+end
+
+for _, plr in ipairs(Players:GetPlayers()) do CheckForMod(plr) end
+Players.PlayerAdded:Connect(CheckForMod)
+Players.PlayerRemoving:Connect(function(plr)
+    if Dazeware.ModDetector.Enabled and IsStaff(plr) then
+        modNotify(plr, "left the server")
+    end
+end)
+
+-- ==================== ENHANCED KNOCK CHECK (Da Uphill Specific) ====================
+local function IsValidTarget(plr)
+    if not plr or not plr.Character or plr == LocalPlayer then return false end
+    local char = plr.Character
+    local hum = char:FindFirstChildOfClass("Humanoid")
+    if not hum or hum.Health <= 0 then return false end
+    if not char:FindFirstChild("HumanoidRootPart") then return false end
+    
+    if hum:GetState() == Enum.HumanoidStateType.Dead then return false end
+    if hum.PlatformStand == true then return false end
+    
+    -- Da Uphill specific knock detection (extensive)
+    local flags = {"K.O", "KO", "Knocked", "Downed", "Dead", "downed", "KO'd", "Stunned", "stunned"}
+    local bodyEffects = char:FindFirstChild("BodyEffects")
+    
+    for _, flagName in ipairs(flags) do
+        local obj = char:FindFirstChild(flagName) or (bodyEffects and bodyEffects:FindFirstChild(flagName))
+        if obj then
+            if obj:IsA("BoolValue") and obj.Value == true then return false end
+            if not obj:IsA("BoolValue") and not obj:IsA("NumberValue") then return false end
+        end
+    end
+    
+    -- Check for health value in BodyEffects (Da Uphill specific)
+    if bodyEffects then
+        local healthVal = bodyEffects:FindFirstChild("Health") or bodyEffects:FindFirstChild("health")
+        if healthVal and healthVal:IsA("NumberValue") and healthVal.Value <= 0 then return false end
+    end
+    
+    if char:FindFirstChild("GRABBING_CONSTRAINT") then return false end
+    if char:FindFirstChild("Carried") then return false end
+    
+    return true
+end
+
+local function IsVisible(target)
+    local myChar = LocalPlayer.Character
+    local myHead = myChar and myChar:FindFirstChild("Head")
+    local theirHead = target.Character and target.Character:FindFirstChild("Head")
+    if not myHead or not theirHead then return false end
+    local direction = (theirHead.Position - myHead.Position)
+    if direction.Magnitude > 400 then return false end
+
+    local raycastParams = RaycastParams.new()
+    raycastParams.FilterDescendantsInstances = {myChar, Camera}
+    raycastParams.FilterType = Enum.RaycastFilterType.Exclude
+    raycastParams.IgnoreWater = true
+    local result = Workspace:Raycast(myHead.Position, direction, raycastParams)
+    return not result or result.Instance:IsDescendantOf(target.Character)
+end
+
+local function GetClosestPlayer()
+    local closest, dist = nil, math.huge
+    local mousePos = UserInputService:GetMouseLocation()
+    for _, plr in ipairs(Players:GetPlayers()) do
+        if IsValidTarget(plr) then
+            local root = plr.Character.HumanoidRootPart
+            local pos = Camera:WorldToViewportPoint(root.Position)
+            if pos.Z > 0 then
+                local screenPos = Vector2.new(pos.X, pos.Y)
+                local d = (screenPos - mousePos).Magnitude
+                if d < dist then
+                    dist = d
+                    closest = plr
+                end
+            end
+        end
+    end
+    return closest
+end
+
+local function UpdateTarget()
+    if not (Dazeware.SilentAim.Enabled or Dazeware.AimAssist.Enabled or Dazeware.TriggerBot.Enabled) then
+        CurrentTarget = nil
+        return
+    end
+    if CurrentTarget and IsValidTarget(CurrentTarget) then
+        return
+    end
+    CurrentTarget = GetClosestPlayer()
+end
+
+-- ==================== ESP ====================
+local ESPObjects = {}
+local function CreateESP(plr)
+    if plr == LocalPlayer or ESPObjects[plr] then return end
+    local Name = Drawing.new("Text")
+    Name.Size = 16; Name.Center = true; Name.Outline = true; Name.Color = Color3.fromRGB(255,255,255); Name.Visible = false
+    ESPObjects[plr] = Name
+
+    RunService.RenderStepped:Connect(function()
+        if not ESPEnabled or not plr.Character or not plr.Character:FindFirstChild("HumanoidRootPart") or not IsValidTarget(plr) then 
+            Name.Visible = false return 
+        end
+        local root = plr.Character.HumanoidRootPart
+        local pos, onScreen = Camera:WorldToViewportPoint(root.Position)
+        if not onScreen then Name.Visible = false return end
+
+        local displayName = Dazeware.ESPSettings.ShowDisplayName and plr.DisplayName or plr.Name
+        Name.Text = displayName
+        Name.Position = Vector2.new(pos.X, pos.Y + Dazeware.ESPSettings.OffsetY)
+        Name.Color = ((Dazeware.SilentAim.Enabled or Dazeware.AimAssist.Enabled) and plr == CurrentTarget) and Color3.fromRGB(255,0,0) or Color3.fromRGB(255,255,255)
+        Name.Visible = true
+    end)
+end
+
+for _, plr in ipairs(Players:GetPlayers()) do CreateESP(plr) end
+Players.PlayerAdded:Connect(CreateESP)
+
+-- ==================== CONDITION-BASED AUTO BUY (Da Uphill 94025855507158) ====================
+local gameConfigs = {
+    [112635921505109] = { buypadsPath = {"MAP", "Pads"}, allowedpads = {"[USP]", "[Tactical Shotgun]", "[Medium Armor]"} },
+    [94025855507158] = { buypadsPath = {"MAP", "Ignored", "Shop"}, allowedpads = {"[High-Medium Armor]", "[USP]", "[Tactical Shotgun]", "[Revolver]"} },
+    [78790821242332] = { buypadsPath = {"MAP", "Shops"}, allowedpads = {"[High-Medium Armor]", "[Tactical Shotgun]", "[USP]"} }
+}
+local config = gameConfigs[game.PlaceId]
+local buypads = nil
+if config then
+    buypads = workspace
+    for _, name in ipairs(config.buypadsPath) do buypads = buypads:WaitForChild(name, 5) end
+end
+
+local function GetInventoryCount()
+    local count = 0
+    local backpack = LocalPlayer:FindFirstChild("Backpack")
+    local char = LocalPlayer.Character
+    
+    if backpack then
+        for _, item in ipairs(backpack:GetChildren()) do
+            if item:IsA("Tool") then count = count + 1 end
+        end
+    end
+    if char then
+        for _, item in ipairs(char:GetChildren()) do
+            if item:IsA("Tool") then count = count + 1 end
+        end
+    end
+    return count
+end
+
+local function clickAllowedPads()
+    if not buypads or not config then return end
+    for _, padName in ipairs(config.allowedpads) do
+        local pad = buypads:FindFirstChild(padName, true)
+        if pad then
+            local cd = pad:FindFirstChildWhichIsA("ClickDetector")
+            if cd then fireclickdetector(cd) end
+        end
+    end
+end
+
+spawn(function()
+    while true do
+        if AutoBuyEnabled and config and GetInventoryCount() >= 2 then 
+            clickAllowedPads() 
+        end
+        task.wait(0.1)
+    end
+end)
+
+-- ==================== MOVEMENT & ANTI-LOCK ====================
+local Angle = 0
+RunService.Heartbeat:Connect(function()
+    if not Dazeware.Misc.AntiLock.Enabled then return end
+    local char = LocalPlayer.Character
+    local root = char and char:FindFirstChild("HumanoidRootPart")
+    if not root then return end
+    local oldCF = root.CFrame; local oldV = root.AssemblyLinearVelocity
+    Angle = Angle + 1
+    local desyncVel = Vector3.new(math.sin(Angle) * Dazeware.Misc.AntiLock.Strength, Dazeware.Misc.AntiLock.Strength, math.cos(Angle) * Dazeware.Misc.AntiLock.Strength)
+    root.CFrame = oldCF * CFrame.Angles(0, math.rad(Angle * Dazeware.Misc.AntiLock.RotationSpeed), 0) * CFrame.new(0, 0, 1.5)
+    root.AssemblyLinearVelocity = desyncVel
+    RunService.RenderStepped:Wait()
+    root.CFrame = oldCF
+    root.AssemblyLinearVelocity = oldV
+end)
+
+local speedConnection = nil
+local function ManageSpeedBypass(char)
+    local hum = char:WaitForChild("Humanoid", 5)
+    if not hum then return end
+
+    if speedConnection then speedConnection:Disconnect() end
+
+    speedConnection = hum:GetPropertyChangedSignal("WalkSpeed"):Connect(function()
+        local targetSpeed = Dazeware.Misc.WalkSpeed.Enabled and Dazeware.Misc.WalkSpeed.Speed or 16
+        if hum.WalkSpeed ~= targetSpeed then
+            hum.WalkSpeed = targetSpeed
+        end
+    end)
+
+    task.spawn(function()
+        while char and char.Parent and hum and hum.Parent do
+            local targetSpeed = Dazeware.Misc.WalkSpeed.Enabled and Dazeware.Misc.WalkSpeed.Speed or 16
+            if hum.WalkSpeed ~= targetSpeed then
+                hum.WalkSpeed = targetSpeed
+            end
+            hum.JumpPower = Dazeware.Misc.SuperJump.Enabled and Dazeware.Misc.SuperJump.Power or 50
+            if Dazeware.Misc.NoJumpCooldown.Enabled then hum.Jump = true end
+            task.wait()
+        end
+    end)
+end
+
+if LocalPlayer.Character then ManageSpeedBypass(LocalPlayer.Character) end
+LocalPlayer.CharacterAdded:Connect(ManageSpeedBypass)
+
+local function SortInventory()
+    local backpack = LocalPlayer:FindFirstChild("Backpack")
+    if not backpack then return end
+    local tools = {}
+    for _, v in ipairs(backpack:GetChildren()) do if v:IsA("Tool") then table.insert(tools, v) end end
+    table.sort(tools, function(a, b)
+        local oa = table.find(Dazeware.Utilities.InventorySorter.Order, a.Name) or 999
+        local ob = table.find(Dazeware.Utilities.InventorySorter.Order, b.Name) or 999
+        return oa < ob
+    end)
+    for _, tool in ipairs(tools) do tool.Parent = backpack end
+    Notify("Inventory Sorted!")
+end
+
+-- ==================== ENHANCED RESOLVER & SILENT AIM (Da Uphill Optimized) ====================
+local function GetResolvedPosition(target)
+    local char = target.Character
+    local root = char and char:FindFirstChild("HumanoidRootPart")
+    if not root then return Vector3.new() end
+
+    local vel = root.AssemblyLinearVelocity
+    local basePos = root.Position
+
+    -- MACRO / SPEED HACK CLAMP
+    if vel.Magnitude > 130 then
+        vel = vel.Unit * 130 
+    end
+    -- SUPER JUMP / ANTI-AIR CLAMP
+    vel = Vector3.new(vel.X, math.clamp(vel.Y, -50, 50), vel.Z)
+
+    if not Dazeware.Resolver.Enabled then
+        return basePos + (vel * Vector3.new(Dazeware.SilentAim.Prediction.X, Dazeware.SilentAim.Prediction.Y, Dazeware.SilentAim.Prediction.Z))
+    end
+
+    if Dazeware.Resolver.UseAdvanced then
+        if not positionHistory[target] then positionHistory[target] = {} end
+        table.insert(positionHistory[target], basePos)
+        if #positionHistory[target] > 10 then table.remove(positionHistory[target], 1) end
+        
+        local avgPos = Vector3.new(0,0,0)
+        for _, p in ipairs(positionHistory[target]) do avgPos += p end
+        avgPos /= #positionHistory[target]
+        
+        local resolved = avgPos + vel * Dazeware.Resolver.Strength
+        return resolved
+    else
+        return basePos + vel * Dazeware.Resolver.Strength
+    end
+end
+
+local function CreateTargetLine()
+    if targetLine then return end
+    targetLine = Drawing.new("Line")
+    targetLine.Thickness = 2; targetLine.Transparency = 0.8
+end
+
+local function UpdateTargetLine()
+    if not targetLine or not Dazeware.SilentAim.TargetLine.Enabled or not Dazeware.SilentAim.Enabled then
+        if targetLine then targetLine.Visible = false end
+        return
+    end
+    local target = CurrentTarget
+    if target and target.Character and IsVisible(target) then
+        local hp = target.Character:FindFirstChild(Dazeware.SilentAim.HitPart) or target.Character.HumanoidRootPart
+        if hp then
+            local mouse = UserInputService:GetMouseLocation()
+            local w, on = Camera:WorldToViewportPoint(hp.Position)
+            if on then
+                targetLine.From = mouse
+                targetLine.To = Vector2.new(w.X, w.Y)
+                targetLine.Color = Dazeware.SilentAim.TargetLine.InFOV
+                targetLine.Visible = true return
+            end
+        end
+    end
+    if targetLine then targetLine.Visible = false end
+end
+CreateTargetLine()
+
+-- ==================== ENHANCED SILENT AIM HOOK (Da Uphill 94025855507158 Optimized) ====================
+-- Force hit every shot on Da Uphill by hooking multiple methods
+local mt = getrawmetatable(game)
+local oldNamecall = mt.__namecall
+local oldIndex = mt.__index
+setreadonly(mt, false)
+
+-- __namecall hook for FindPartOnRay and shooting methods
+mt.__namecall = newcclosure(function(self, ...)
+    local method = getnamecallmethod()
+    local args = {...}
+    
+    -- Bypass bullet validation / hit registration checks
+    if Dazeware.SilentAim.Enabled then
+        -- Redirect any raycast/validation to hit the target
+        if method == "FindPartOnRay" or method == "FindPartOnRayWithIgnoreList" then
+            local t = CurrentTarget
+            if t and t.Character and IsValidTarget(t) then
+                local hp = t.Character:FindFirstChild(Dazeware.SilentAim.HitPart) or t.Character:FindFirstChild("HumanoidRootPart")
+                if hp then
+                    local resolvedPos = GetResolvedPosition(t)
+                    -- Force the ray to return the target's hit part
+                    return hp, hp.Position, Vector3.new(), Enum.Material.SmoothPlastic
+                end
+            end
+        end
+    end
+    
+    return oldNamecall(self, ...)
+end)
+
+-- __index hook for mouse Hit/Target
+mt.__index = newcclosure(function(self, k)
+    if Dazeware.SilentAim.Enabled and self == LocalPlayer:GetMouse() then
+        local t = CurrentTarget
+        if t and t.Character and IsVisible(t) and IsValidTarget(t) then
+            local hp = t.Character:FindFirstChild(Dazeware.SilentAim.HitPart) or t.Character:FindFirstChild("HumanoidRootPart")
+            if hp then
+                local resolvedPos = GetResolvedPosition(t)
+                if k == "Hit" then
+                    if Dazeware.Misc.BulletTP.Enabled then
+                        return CFrame.new(resolvedPos + hp.Velocity * Dazeware.Misc.BulletTP.Strength)
+                    end
+                    return CFrame.new(resolvedPos)
+                elseif k == "Target" then
+                    return hp
+                elseif k == "X" or k == "Y" or k == "Z" then
+                    local x, y, z = resolvedPos.X, resolvedPos.Y, resolvedPos.Z
+                    if k == "X" then return x
+                    elseif k == "Y" then return y
+                    elseif k == "Z" then return z end
+                end
+            end
+        end
+    end
+    return oldIndex(self, k)
+end)
+
+setreadonly(mt, true)
+
+-- ==================== TRIGGER BOT (Da Uphill Optimized) ====================
+local lastTrigger = 0
+RunService.Heartbeat:Connect(function()
+    if not Dazeware.TriggerBot.Enabled or not CurrentTarget or not IsVisible(CurrentTarget) or not IsValidTarget(CurrentTarget) then return end
+    local now = tick()
+    if now - lastTrigger < Dazeware.TriggerBot.Cooldown then return end
+    local tool = LocalPlayer.Character and LocalPlayer.Character:FindFirstChildOfClass("Tool")
+    if not tool then return end
+    local toolName = tool.Name:lower()
+    if toolName:find("katana") or toolName:find("knife") then return end
+    tool:Activate()
+    lastTrigger = now
+end)
+
+-- ==================== RENDER LOOP ====================
+RunService.RenderStepped:Connect(function()
+    UpdateTargetLine()
+    UpdateTarget()
+    
+    -- Aim Assist
+    if not Dazeware.AimAssist.Enabled or not CurrentTarget or not IsVisible(CurrentTarget) or not IsValidTarget(CurrentTarget) then return end
+    
+    local hitPart = CurrentTarget.Character:FindFirstChild(Dazeware.AimAssist.HitPart) or CurrentTarget.Character:FindFirstChild("HumanoidRootPart")
+    if hitPart then
+        local vel = hitPart.AssemblyLinearVelocity
+        if vel.Magnitude > 130 then vel = vel.Unit * 130 end
+        vel = Vector3.new(vel.X, math.clamp(vel.Y, -50, 50), vel.Z)
+        
+        local vectorPred = Vector3.new(Dazeware.AimAssist.Prediction.X, Dazeware.AimAssist.Prediction.Y, Dazeware.AimAssist.Prediction.Z)
+        local pred = hitPart.Position + (vel * vectorPred)
+        Camera.CFrame = Camera.CFrame:Lerp(CFrame.lookAt(Camera.CFrame.Position, pred), Dazeware.AimAssist.Smoothness)
+    end
+end)
+
+-- ==================== ENHANCED INPUT HANDLER ====================
+UserInputService.InputBegan:Connect(function(input, gp)
+    if gp then return end
+    local kc = input.KeyCode.Name
+
+    for feature, key in pairs(Dazeware.General.Binds) do
+        if key == kc then
+            if feature == "InventorySorter" then
+                SortInventory()
+            elseif feature == "WalkSpeed" then
+                Dazeware.Misc.WalkSpeed.Enabled = not Dazeware.Misc.WalkSpeed.Enabled
+                Notify(Dazeware.Misc.WalkSpeed.Enabled and "WalkSpeed ON" or "WalkSpeed OFF")
+            elseif feature == "BulletTP" then
+                Dazeware.Misc.BulletTP.Enabled = not Dazeware.Misc.BulletTP.Enabled
+                Notify(Dazeware.Misc.BulletTP.Enabled and "Bullet TP ON" or "Bullet TP OFF")
+            elseif feature == "AntiLock" then
+                Dazeware.Misc.AntiLock.Enabled = not Dazeware.Misc.AntiLock.Enabled
+                Notify("Anti-Lock " .. (Dazeware.Misc.AntiLock.Enabled and "ON" or "OFF"))
+            elseif feature == "ESP" then
+                ESPEnabled = not ESPEnabled
+                Notify("ESP " .. (ESPEnabled and "ON" or "OFF"))
+            elseif feature == "SuperJump" then
+                Dazeware.Misc.SuperJump.Enabled = not Dazeware.Misc.SuperJump.Enabled
+                Notify("Super Jump " .. (Dazeware.Misc.SuperJump.Enabled and "ON" or "OFF"))
+            elseif feature == "Resolver" then
+                Dazeware.Resolver.Enabled = not Dazeware.Resolver.Enabled
+                Notify("Resolver " .. (Dazeware.Resolver.Enabled and "ON" or "OFF"))
+            elseif feature == "SilentAimToggle" then
+                Dazeware.SilentAim.Enabled = not Dazeware.SilentAim.Enabled
+                Notify("Silent Aim " .. (Dazeware.SilentAim.Enabled and "ON" or "OFF"))
+                if not Dazeware.SilentAim.Enabled and not Dazeware.AimAssist.Enabled then CurrentTarget = nil end
+            elseif feature == "AimAssistToggle" then
+                Dazeware.AimAssist.Enabled = not Dazeware.AimAssist.Enabled
+                Notify("Aim Assist " .. (Dazeware.AimAssist.Enabled and "ON" or "OFF"))
+                if not Dazeware.SilentAim.Enabled and not Dazeware.AimAssist.Enabled then CurrentTarget = nil end
+            elseif feature == "TriggerBotToggle" then
+                Dazeware.TriggerBot.Enabled = not Dazeware.TriggerBot.Enabled
+                Notify("Trigger Bot " .. (Dazeware.TriggerBot.Enabled and "ON" or "OFF"))
+            end
+        end
+    end
+
+    if input.KeyCode == Enum.KeyCode.Q then
+        if config then
+            AutoBuyEnabled = not AutoBuyEnabled
+            Notify(AutoBuyEnabled and "✅ AutoBuy Loop Toggled!" or "❌ AutoBuy Loop Paused")
+        end
+    end
+end)
+
+print("✅ dazeware - Da Uphill Enhanced Loaded Successfully!")
